@@ -137,6 +137,9 @@
 (defcustom habitrpg-api-user-path "/user"
   "API User Path"
   :group 'habitrpg)
+(defcustom habitrpg-api-tasks-path "/tasks"
+  "API Task Path"
+  :group 'habitrpg)
 (defcustom habitrpg-api-inventory-path "/user/inventory"
   "API Inventory Path"
   :group 'habitrpg)
@@ -374,7 +377,8 @@ The function is given one argument, the status buffer."
        :sync t
        :success (function*
 		 (lambda (&key data &allow-other-keys)
-		   (let* ((stats (assoc-default 'stats data))
+		   (let* ((data (assoc-default 'data data))
+			  (stats (assoc-default 'stats data))
 			  ;; stats
 			  (exp (assoc-default 'exp stats))
 			  (gp (assoc-default 'gp stats))
@@ -439,12 +443,12 @@ The function is given one argument, the status buffer."
       (habitrpg-insert-habits)
       (habitrpg-insert-dailys)
       (habitrpg-insert-rewards)
+      (habitrpg-insert-inventory t)
       (habitrpg-insert-eggs)
       (habitrpg-insert-potions)
       (habitrpg-insert-pets)
       (habitrpg-insert-store t)
-      (kill-buffer "*request*")
-      )))
+      (kill-buffer "*request*"))))
 
 (defun habitrpg-mode ()
   "Review the status of your habitrpg characters.
@@ -1114,7 +1118,7 @@ TITLE is the displayed title of the section."
 (habitrpg-define-inserter tasks ()
   (habitrpg-section 'todo
  		    "Todos:" 'habitrpg-wash-tasks nil
-		    (concat habitrpg-api-url habitrpg-api-user-path)
+		    (concat habitrpg-api-url habitrpg-api-usertask-path)
 		    :type "GET"
 		    :parser 'json-read
 		    :headers `(("Accept" . "application/json")
@@ -1124,15 +1128,8 @@ TITLE is the displayed title of the section."
 		    :success (function*
 			      (lambda (&key data &allow-other-keys)
 				(with-current-buffer (get-buffer-create "*request*")
-				  (let* ((tasks (append (assoc-default 'todos data) 
-							(assoc-default 'dailys data)
-							(assoc-default 'habits data)
-							(assoc-default 'rewards data)
-							'()))
-					 (items (assoc-default 'items data))
-					 (eggs (assoc-default 'eggs items))
-					 (potions (assoc-default 'hatchingPotions items))
-					 (pets (assoc-default 'pets items))
+				  (let* ((data (assoc-default 'data data))
+					 (tasks (append data nil))
 					 (names (dolist (task-id tasks)
 						  (let* ((completed (assoc-default 'completed task-id))
 							 (type (assoc-default 'type task-id))
@@ -1147,11 +1144,11 @@ TITLE is the displayed title of the section."
 							     (not (string= type "todo")))
 							(progn
 							  (insert (concat "type: "
-									type " " "COMPLETED "
-									text " "
-									"id: "
-									id " "
-									"notes: " notes " "))
+									  type " " "COMPLETED "
+									  text " "
+									  "id: "
+									  id " "
+									  "notes: " notes " "))
 							  (if value
 							      (insert "value: "
 								      (if (numberp value)
@@ -1172,8 +1169,27 @@ TITLE is the displayed title of the section."
 									(number-to-string value)
 								      value)
 								    "\n")
-							  (insert "value: 0\n")))))))
+							  (insert "value: 0\n"))))))))))))))
 
+(habitrpg-define-inserter inventory (new-request-p)
+  (habitrpg-section 'inventory
+ 		    "Inventory:" 'habitrpg-wash-tasks new-request-p
+		    (concat habitrpg-api-url habitrpg-api-user-path)
+		    :type "GET"
+		    :parser 'json-read
+		    :headers `(("Accept" . "application/json")
+			       ("X-API-User" . ,habitrpg-api-user)
+			       ("X-API-Key" . ,habitrpg-api-token))
+		    :sync t
+		    :success (function*
+			      (lambda (&key data &allow-other-keys)
+				(with-current-buffer (get-buffer-create "*request*")
+				  (goto-char (point-max))
+				  (let* ((data (assoc-default 'data data))
+					 (items (assoc-default 'items data))
+					 (eggs (assoc-default 'eggs items))
+					 (potions (assoc-default 'hatchingPotions items))
+					 (pets (assoc-default 'pets items))
 					 (eggnames (dotimes (i (length eggs))
 						     (let ((egg (nth i eggs)))
 						       (insert (concat "type: egg " (symbol-name (car egg)) " Egg"
@@ -1201,10 +1217,11 @@ TITLE is the displayed title of the section."
   			      (lambda (&key data &allow-other-keys)
   				(with-current-buffer (get-buffer-create "*request*")
 				  (goto-char (point-max))
-  				  (let* ( (names (seq-doseq (item data)
-						   (let* ((name (assoc-default 'key item))
-							  (value (number-to-string (assoc-default 'value item))))
-						     (insert (concat "type: store "  name " id: " name " notes: 0" " value: " value "\n")))))))))))) 
+  				  (let* ((data (assoc-default 'data data))
+					 (names (seq-doseq (item data)
+						  (let* ((name (assoc-default 'key item))
+							 (value (number-to-string (assoc-default 'value item))))
+						    (insert (concat "type: store "  name " id: " name " notes: 0" " value: " value "\n")))))))))))) 
 
 
 
@@ -1522,7 +1539,7 @@ there.  If its state is DONE, update."
   (lexical-let ((t task) (func func))
     (deferred:$
       (request-deferred
-       (concat habitrpg-api-url habitrpg-api-user-path)
+       (concat habitrpg-api-url habitrpg-api-usertask-path)
        :headers `(("Accept" . "application/json")
 		  ("X-API-User" . ,habitrpg-api-user)
 		  ("X-API-Key" . ,habitrpg-api-token))
@@ -1535,11 +1552,8 @@ there.  If its state is DONE, update."
 	      (progn
 		(message "HabitRPG: Error in getting id for task [%s]" t)
 		(setq hrpg-to-add (cl-adjoin t hrpg-to-add)))
-	    (let* ((data (request-response-data response))
-		   (tasks (append (assoc-default 'todos data) 
-				  (assoc-default 'dailys data)
-				  (assoc-default 'habits data)
-				  '()))
+	    (let* ((data (assoc-default 'data (request-response-data response)))
+		   (tasks (append data nil))
 		   (names (mapcar
 			   (lambda (task-id)
 			     (let* ((completed (assoc-default 'completed task-id)))
@@ -1579,7 +1593,7 @@ there.  If its state is DONE, update."
     (request
      (if (string= type "store")
 	 (concat habitrpg-api-url habitrpg-api-inventory-path "/buy/" id "/")
-       (concat habitrpg-api-url habitrpg-api-usertask-path "/" id "/"
+       (concat habitrpg-api-url habitrpg-api-tasks-path "/" id "/score/"
 	       (unless direction "up") direction))
      :type "POST"
      :headers `(("Content-Type" . "application/json")
@@ -1718,7 +1732,7 @@ there.  If its state is DONE, update."
 	   (type (habitrpg-section-title (habitrpg-section-parent section))))
       (when id
 	(request
-	 (concat habitrpg-api-url habitrpg-api-usertask-path "/" id)
+	 (concat habitrpg-api-url habitrpg-api-tasks-path "/" id)
 	 :type "DELETE"
 	 :headers `(("Content-Type" . "application/json")
 		    ("X-API-User" . ,habitrpg-api-user)
